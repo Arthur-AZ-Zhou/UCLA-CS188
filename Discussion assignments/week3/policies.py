@@ -1,41 +1,5 @@
-# Week 2 Discussion
 import numpy as np
 import robosuite as suite
-
-# pid.py
-class PController:
-    def __init__(self, kp, target):
-        """
-        Initialize a proportional controller.
-
-        Args:
-            kp (float): Proportional gain.
-            target (tuple or array): Target position.
-        """
-        self.kp = kp
-        self.target = target
-
-    def reset(self, target=None):
-        """
-        Reset the target position.
-
-        Args:
-            target (tuple or array, optional): New target position.
-        """
-        self.target = target
-
-    def update(self, current_pos):
-        """
-        Compute the control signal.
-
-        Args:
-            current_pos (array-like): Current position.
-
-        Returns:
-            np.ndarray: Control output vector.
-        """
-        # Implement this!
-        pass
 
 # policies.py    
 class HoverPolicy(object):
@@ -87,29 +51,3 @@ class HoverPolicy(object):
         action[0:3] = ctrl_output
 
         return action
-        
-                
-# test.py
-# Create environment instance
-env = suite.make(
-    env_name="Lift",
-    robots="Panda",
-    has_renderer=True,
-    has_offscreen_renderer=False,
-    use_camera_obs=False,
-)
-
-# Reset the environment
-for _ in range(5):
-    obs = env.reset()
-    policy = HoverPolicy(obs)
-    
-    while True:
-        action = policy.get_action(obs)
-        obs, reward, done, info = env.step(action)  # take action in the environment
-        
-        env.render()  # render on display
-        if reward == 1.0 or done:
-            # Ignore reward for now.
-            # You should care about it for the actual assignment.
-            break
