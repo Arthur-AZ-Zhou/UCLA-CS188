@@ -33,5 +33,7 @@ class PController:
         Returns:
             np.ndarray: Control output vector.
         """
-        error = np.array(self.target) - np.array(current_pos)
+        currentPosition = np.array(current_pos)
+        target = np.array(self.target)
+        error = target - currentPosition
         return self.kp * error

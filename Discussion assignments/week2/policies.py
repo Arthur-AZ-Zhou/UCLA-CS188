@@ -1,5 +1,6 @@
 import numpy as np
 import robosuite as suite
+from pid import PController
 
 # policies.py    
 class HoverPolicy(object):
@@ -17,6 +18,7 @@ class HoverPolicy(object):
                 - 'cube_pos': The position of the cube to be touched.
         """
         self.cube_pos = obs["cube_pos"]
+        self.controller = PController(-4, self.cube_pos)
         
 
     def get_action(self, obs):
@@ -38,10 +40,11 @@ class HoverPolicy(object):
 
         # State logic
         # Implement here!
+        u = self.controller.update(current_cube_pos)
         # End of state logic
 
         # Use pcontroller method to update control signal.
-        ctrl_output = None # Implement this!
+        ctrl_output = u # Implement this!
 
         # Q: for students: What is the action space of the robot?
         action = np.zeros(7)

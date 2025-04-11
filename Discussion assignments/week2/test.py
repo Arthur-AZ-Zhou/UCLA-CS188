@@ -1,5 +1,6 @@
 import numpy as np
 import robosuite as suite
+from policies import HoverPolicy
 
 # Create environment instance
 env = suite.make(
