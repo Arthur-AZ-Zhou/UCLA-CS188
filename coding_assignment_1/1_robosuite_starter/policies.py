@@ -8,70 +8,55 @@ class LiftPolicy(object):
         """
         Initialize the LiftPolicy with the first observation from the environment.
         """
-        # PID gains for position control (x,y,z)
-        # Higher gains for precise positioning
-        self.kp_precise = [2.0, 2.0, 2.0]
+        self.kp_precise = [2.0, 2.0, 2.0] #K_ for axes: (x, y, z)
         self.ki_precise = [0.05, 0.05, 0.05]
         self.kd_precise = [0.2, 0.2, 0.2]
-        
-        # Lower gains for lifting motion (slower, smoother)
-        self.kp_lift = [1.0, 1.0, 0.5]  # Lower z gain for slower lifting
+        self.kp_lift = [1.0, 1.0, 0.5] #low = slower and smoother lifts, (x, y, z) again
         self.ki_lift = [0.01, 0.01, 0.01]
         self.kd_lift = [0.1, 0.1, 0.1]
         
         cube_pos = obs['cube_pos']
         
-        # Define targets
-        self.target_above = cube_pos.copy()
-        self.target_above[2] += 0.1  # 10cm above cube
+        self.target_height = cube_pos.copy() #grabs cube 10cm above ground
+        self.target_height[2] += 0.1
+        self.target_grasp = cube_pos.copy() #grab cube at exact coords sitting down
+        self.target_lift = cube_pos.copy() #how high we lift the cube
+        self.target_lift[2] += 0.5  
         
-        self.target_grasp = cube_pos.copy()
-        
-        self.target_lift = cube_pos.copy()
-        self.target_lift[2] += 0.3  # Lift height
-        
-        # Start with precise positioning
-        self.pid = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_above)
-        self.phase = 0  # 0: move above, 1: lower to grasp, 2: grasping, 3: lift
+        self.pid_controller = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_height) #init new PID controller
+
+        self.phase = 0  #0: arm moves above, 1: lower arm to grab, 2: grab, 3: lift
         self.gripper_open = True
-        self.grasp_start_time = None
+        self.grasp_start_time = 0
         self.grasp_duration = 0.5  # 0.5 seconds to ensure grasp
         
     def get_action(self, obs):
-        eef_pos = obs['robot0_eef_pos']
-        cube_pos = obs['cube_pos']
-        error = self.pid.get_error()
+        eef_pos = obs['robot0_eef_pos'] #end-effector position
+        current_cube_pos = obs['cube_pos']
+        error = self.pid_controller.get_error() #can think of this as distance to target
         
-        # Update targets in case cube moved
-        self.target_above = cube_pos.copy()
-        self.target_above[2] += 0.1
-        self.target_grasp = cube_pos.copy()
-        
-        # Phase transitions
-        if self.phase == 0 and error < 0.02:  # Reached above position
+        if (self.phase == 0 and error < 0.02):  #reached above
             self.phase = 1
-            self.pid.reset(self.target_grasp)
-        elif self.phase == 1 and error < 0.01:  # Reached grasp position
+            self.pid_controller.reset(self.target_grasp)
+
+        elif (self.phase == 1 and error < 0.01):  #reached grab
             self.phase = 2
-            self.gripper_open = False  # Close gripper
-            self.grasp_start_time = time.time()  # Start grasp timer
-        elif self.phase == 2 and (time.time() - self.grasp_start_time) > self.grasp_duration:
+            self.gripper_open = False
+            self.grasp_start_time = time.time()  
+
+        elif (self.phase == 2 and self.grasp_duration < (time.time() - self.grasp_start_time)):
             self.phase = 3
-            # Switch to lifting gains and target
-            self.pid = PID(self.kp_lift, self.ki_lift, self.kd_lift, self.target_lift)
+            self.pid_controller = PID(self.kp_lift, self.ki_lift, self.kd_lift, self.target_lift)
         
-        # Get PID control output
-        control = self.pid.update(eef_pos, 0.01)
+        control = self.pid_controller.update(eef_pos, 0.01)
         
-        # Create action vector
         action = np.zeros(7)
         action[:3] = control[:3]
         
-        # Gripper control - keep closed during and after grasping phase
         if self.phase >= 2:
-            action[-1] = 1  # Keep gripper closed
+            action[-1] = 1 #closed gripper
         else:
-            action[-1] = -1  # Open gripper
+            action[-1] = -1 #opened gripper
         
         return action
     
@@ -80,101 +65,77 @@ class StackPolicy(object):
         """
         Initialize the StackPolicy with improved grasping and stacking behavior.
         """
-        # PID gains for precise positioning
         self.kp_precise = [2.0, 2.0, 2.0]
         self.ki_precise = [0.05, 0.05, 0.05]
         self.kd_precise = [0.2, 0.2, 0.2]
-        
-        # PID gains for lifting/stacking motions (slower in z-axis)
         self.kp_lift = [1.0, 1.0, 0.5]
         self.ki_lift = [0.01, 0.01, 0.01]
         self.kd_lift = [0.1, 0.1, 0.1]
         
-        # Get cube positions
-        self.cubeA_pos = obs['cubeA_pos']  # Cube to pick up
-        self.cubeB_pos = obs['cubeB_pos']  # Base cube
+        self.cube_pos_1 = obs['cubeA_pos'] #red
+        self.cube_pos_2 = obs['cubeB_pos'] #green
         
-        # Define targets
-        self.target_approach_A = self.cubeA_pos.copy()
-        self.target_approach_A[2] += 0.1  # 10cm above cube A
+        self.target_height_1 = self.cube_pos_1.copy()
+        self.target_height_1[2] += 0.1  #grabs red cube 10cm off ground
+        self.target_grasp_1 = self.cube_pos_1.copy()
+        self.target_lift = self.cube_pos_1.copy()
+        self.target_lift[2] += 0.1  #how high we lift
+        self.target_height_2 = self.cube_pos_2.copy()
+        self.target_height_2[2] += 0.1  #height we stack at
         
-        self.target_grasp_A = self.cubeA_pos.copy()
-        
-        self.target_lift = self.cubeA_pos.copy()
-        self.target_lift[2] += 0.1  # Lift height
-        
-        self.target_approach_B = self.cubeB_pos.copy()
-        self.target_approach_B[2] += 0.1  # Stacking height
-        
-        # Initialize PID and state
-        self.pid = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_approach_A)
-        self.phase = 0  # 0: approach A, 1: grasp A, 2: lift A, 3: approach B, 4: release
+        self.pid_controller = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_height_1)
+        self.phase = 0  #0: move to red, 1: grab red, 2: lift red, 3: approach green, 4: release
         self.gripper_open = True
-        self.grasp_start_time = None
-        self.grasp_duration = 0.5  # 0.5 seconds to ensure grasp
-        self.release_start_time = None
-        self.release_duration = 1  # 0.3 seconds to ensure release
-        self.settle_duration = 0.5
-        self.complete = False;
+        self.grasp_start_time = 0
+        self.grasp_duration = 0.5
+        self.release_start_time = 0
+        self.release_duration = 1
         
     def get_action(self, obs):
-        if self.complete:  # NEW: Return neutral action if completed
-            return np.zeros(7)
-            
         eef_pos = obs['robot0_eef_pos']
-        self.cubeA_pos = obs['cubeA_pos']
-        self.cubeB_pos = obs['cubeB_pos']
-        error = self.pid.get_error()
+        self.cube_pos_1 = obs['cubeA_pos']
+        self.cube_pos_2 = obs['cubeB_pos']
+        error = self.pid_controller.get_error()
         
-        # Update moving targets
-        self.target_approach_A = self.cubeA_pos.copy()
-        self.target_approach_A[2] += 0.1
-        self.target_grasp_A = self.cubeA_pos.copy()
-        
-        # Phase transitions
-        if self.phase == 0 and error < 0.02:
+        if (self.phase == 0 and error < 0.02):
             self.phase = 1
-            self.pid.reset(self.target_grasp_A)
-        elif self.phase == 1 and error < 0.01:
+            self.pid_controller.reset(self.target_grasp_1)
+
+        elif (self.phase == 1 and error < 0.01):
             self.phase = 2
             self.gripper_open = False
             self.grasp_start_time = time.time()
-        elif self.phase == 2 and (time.time() - self.grasp_start_time) > self.grasp_duration:
+
+        elif (self.phase == 2 and self.grasp_duration < (time.time() - self.grasp_start_time)):
             self.phase = 3
-            self.pid = PID(self.kp_lift, self.ki_lift, self.kd_lift, self.target_lift)
-        elif self.phase == 3 and error < 0.03:
+            self.pid_controller = PID(self.kp_lift, self.ki_lift, self.kd_lift, self.target_lift)
+
+        elif (self.phase == 3 and error < 0.03):
             self.phase = 4
-            self.pid = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_approach_B)
-        elif self.phase == 4 and error < 0.02:
+            self.pid_controller = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_height_2)
+
+        elif (self.phase == 4 and error < 0.02):
             self.phase = 5
-            self.pid.reset(self.cubeB_pos + np.array([0, 0, 0.05]))
+            self.pid_controller.reset(self.cube_pos_2 + np.array([0, 0, 0.075])) #set it down more gently
             self.release_start_time = time.time()
-        elif self.phase == 5:
+
+        elif (self.phase == 5):
             if (time.time() - self.release_start_time) > self.release_duration:
+                self.phase = 6 #set to 6 to release gripper
                 self.gripper_open = True
-                self.phase = 6  # NEW: Enter settle phase
                 self.settle_start_time = time.time()
-        elif self.phase == 6:  # NEW: Settle phase
-            if (time.time() - self.settle_start_time) > self.settle_duration:
-                self.complete = True  # Mark as fully completed
         
-        # Get PID control output
-        control = self.pid.update(eef_pos, 0.01) if self.phase < 6 else np.zeros(3)
+        control = self.pid_controller.update(eef_pos, 0.01)
         
-        # Create action vector
         action = np.zeros(7)
         action[:3] = control[:3]
         
-        # Gripper control
-        if 2 <= self.phase < 5:  # Keep closed until release
+        if 2 <= self.phase < 5: #keep gripper closed while moving
             action[-1] = 1
         else:
             action[-1] = -1 if self.gripper_open else 1
         
         return action
-
-    def is_complete(self):  # NEW: Completion check method
-        return self.complete
 
 class DoorPolicy(object):
     def __init__(self, obs):
@@ -185,12 +146,10 @@ class DoorPolicy(object):
         2. Firm grasp with downward pressure
         3. Proper downward-and-left turning motion
         """
-        # PID gains
-        self.kp_approach = [8.0, 8.0, 8.0]  # High precision approach
+        self.kp_approach = [8.0, 8.0, 8.0]
         self.ki_approach = [0.1, 0.1, 0.1]
         self.kd_approach = [0.5, 0.5, 0.5]
-        
-        self.kp_turn = [4.0, 4.0, 2.0]  # Smoother turning gains
+        self.kp_turn = [4.0, 4.0, 2.0]
         self.ki_turn = [0.05, 0.05, 0.0]
         self.kd_turn = [0.4, 0.4, 0.2]
 
