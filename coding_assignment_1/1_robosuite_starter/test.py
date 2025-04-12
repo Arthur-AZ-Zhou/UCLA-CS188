@@ -2,24 +2,33 @@ import numpy as np
 import robosuite as suite
 from policies import *
 
+# Test configuration
+tasks = ["Lift", "Stack", "Door"]
+policies = [LiftPolicy, StackPolicy, DoorPolicy]
 
-# create environment instance
-env = suite.make(
-    env_name="Lift", # replace with other tasks "Stack" and "Door"
-    robots="Panda",  # try with other robots like "Sawyer" and "Jaco"
-    has_renderer=True,
-    has_offscreen_renderer=False,
-    use_camera_obs=False,
-)
+# Run each task
+for task, policy_class in zip(tasks, policies):
 
-# reset the environment
-for _ in range(5):
+    print(f"Testing {task} task...")
+    
+    env = suite.make(
+        env_name=task,
+        robots="Panda",
+        has_renderer=True,
+        has_offscreen_renderer=False,
+        use_camera_obs=False,
+    )
+    
     obs = env.reset()
-    policy = LiftPolicy(obs)
+    policy = policy_class(obs)
     
     while True:
         action = policy.get_action(obs)
-        obs, reward, done, info = env.step(action)  # take action in the environment
+        obs, reward, done, info = env.step(action)
         
-        env.render()  # render on display
-        if reward == 1.0 or done: break
+        env.render()
+        if reward == 1.0 or done:
+            print(f"Task {'succeeded' if reward == 1.0 else 'failed'}")
+            break
+    
+    env.close()
