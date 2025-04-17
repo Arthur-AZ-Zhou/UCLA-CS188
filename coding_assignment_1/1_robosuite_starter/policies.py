@@ -140,35 +140,53 @@ class DoorPolicy(object):
         self.ki_lift = [0.01, 0.01, 0.01]
         self.kd_lift = [0.1, 0.1, 0.1]
 
-        self.handle_pos = obs['door_pos'].copy()
-        self.target_pos = self.handle_pos.copy()
+        self.target_height = obs['handle_pos'].copy()
+        self.target_height[2] += 0.1
+        self.target_grasp = obs['handle_pos'].copy()
+        self.target_grasp[2] -= 0.05
+        self.target_push_down = obs['handle_pos'].copy()
+        self.target_push_down[2] -= 0.6
+        self.target_pull = self.target_push_down
+        self.target_pull[1] += 0.35
 
-        self.pid_controller = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_pos)
+        self.pid_controller = PID(self.kp_precise, self.ki_precise, self.kd_precise, self.target_height)
         
-        self.phase = 0 #0: arm tilts 90 degrees to face handle, 1: arm moves to grab, 2: grab, 3: rotate downwards
-        self.gripper_open = True
+        self.phase = 0
         self.grasp_start_time = 0
-        self.grasp_duration = 0.5
 
     def get_action(self, obs):
         eef_pos = obs['robot0_eef_pos']
+        current_handle_pos = obs['handle_pos']
         error = self.pid_controller.get_error()
 
-        if (self.phase == 0 and error < 0.02):
+        # print("phase: " , self.phase, " | error: ", error, " | time: ", (time.time() - self.grasp_start_time))
+
+        if (self.phase == 0 and error < 0.02): #move above handle
             self.phase = 1
-            self.pid_controller.reset(self.target_pos)
+            self.grasp_start_time = time.time()
+            # print("start time: ", self.grasp_start_time)
+            
+        elif (self.phase == 1 and error < 0.03 and 3 < (time.time() - self.grasp_start_time)): #reached handle position
+            # print("PHASE 2 TRIGGERED")
+            self.phase = 2
+            self.pid_controller.reset(self.target_grasp)
+
+        elif (self.phase == 2 and error < 0.03 and 5 < (time.time() - self.grasp_start_time)): #go down and grip onto handle?
+            self.phase = 3
+            self.pid_controller = PID(self.kp_lift, self.ki_lift, self.kd_lift, self.target_push_down)
+
+        elif (self.phase == 3 and error < 0.03 and 9 < (time.time() - self.grasp_start_time)): #pull
+            self.phase = 4
+            self.pid_controller = PID(self.kp_lift, self.ki_lift, self.kd_lift, self.target_pull)
             
         control = self.pid_controller.update(eef_pos, 0.01)
 
         action = np.zeros(7)
         action[:3] = control[:3]
-        
-        if (self.phase == 0):
-            action[5] = 0.5
-        
-        if (2 <= self.phase):
-            action[-1] = 1
+
+        if (3 <= self.phase):
+            action[-1] = 1 #closed gripper
         else:
-            action[-1] = -1
+            action[-1] = -1 #opened gripper
 
         return action
