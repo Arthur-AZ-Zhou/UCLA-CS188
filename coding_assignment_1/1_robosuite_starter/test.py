@@ -9,8 +9,8 @@ task_policies = {
 }
 
 for task, policy_class in task_policies.items():
-    if (task != "Door"):
-        continue
+    # if (task != "Door"):
+    #     continue
 
     print("Testing task: " + task)
 

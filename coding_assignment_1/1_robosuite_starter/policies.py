@@ -159,7 +159,7 @@ class DoorPolicy(object):
         current_handle_pos = obs['handle_pos']
         error = self.pid_controller.get_error()
 
-        # print("phase: " , self.phase, " | error: ", error, " | time: ", (time.time() - self.grasp_start_time))
+        print("phase: " , self.phase, " | error: ", error, " | time: ", (time.time() - self.grasp_start_time))
 
         if (self.phase == 0 and error < 0.02): #move above handle
             self.phase = 1
