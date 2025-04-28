@@ -134,6 +134,7 @@ for _ in range(num_trials):
         # Check for task success
         if reward == 1.0:
             success_rate += 1
+            print("SUCCESS TRIGGER================================================================================")
             break
         if done:
             break

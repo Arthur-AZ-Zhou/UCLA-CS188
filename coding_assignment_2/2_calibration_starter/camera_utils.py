@@ -17,8 +17,79 @@ def detect_red_blob(input_image):
     Returns:
         tuple or None: (x, y) coordinates of the red blob's centroid in pixel space, or None if no blob is found.
     """
-    pass
 
+    def bgr_to_hsv(input_image):
+        """
+        Convert an RGB image to HSV color space.
+        Parameters:
+        input_image (np.ndarray): Input RGB image (BGR format as used by OpenCV).
+        Returns:
+        np.ndarray: HSV image.
+        """
+        return cv2.cvtColor(input_image, cv2.COLOR_BGR2HSV)
+    
+    def create_red_masks(hsv_image):
+        """
+        Create a mask for red color in the HSV image.
+
+        Parameters:
+            hsv_image (np.ndarray): Input HSV image.
+
+        Returns:
+            np.ndarray: Binary mask where red pixels are white and others are black.
+        """
+        lower_mask1 = np.array([0, 100, 50])
+        upper_mask1 = np.array([10, 255, 255])
+        lower_mask2 = np.array([170, 100, 50])
+        upper_mask2 = np.array([180, 255, 255])
+        mask1 = cv2.inRange(hsv_image, lower_mask1, upper_mask1)
+        mask2 = cv2.inRange(hsv_image, lower_mask2, upper_mask2)
+        return mask1, mask2
+    
+    def combine_masks(mask1, mask2):
+        """
+        Combine two binary masks.
+
+        Parameters:
+            mask1 (np.ndarray): First binary mask.
+            mask2 (np.ndarray): Second binary mask.
+
+        Returns:
+            np.ndarray: Combined binary mask.
+        """
+        return mask1 | mask2
+    
+    def extract_contour(mask):
+        """
+        Extract largest contour from a binary mask.
+
+        Parameters:
+            mask (np.ndarray): Binary mask.
+
+        Returns:
+            np.ndarray: Largest contour found in the mask.
+        """
+        contours,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        largest_contour = max(contours, key=cv2.contourArea)
+        return largest_contour
+    
+    def calculate_centroid(contour):
+        """
+        Calculate the centroid of a contour.
+
+        Parameters:
+            contour (np.ndarray): Contour points.
+
+        Returns:
+            tuple: Centroid coordinates (x, y).
+        """
+        M = cv2.moments(contour)
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
+        return (cx, cy)
+    
+    mask1, mask2 = create_red_masks(bgr_to_hsv(input_image))
+    return calculate_centroid(extract_contour(combine_masks(mask1, mask2)))
 
 def pixel_to_camera3d(x, y, depth_image, cam_intrinsics):
     """
@@ -33,8 +104,20 @@ def pixel_to_camera3d(x, y, depth_image, cam_intrinsics):
     Returns:
         np.ndarray or None: 3D point [X, Y, Z] in the camera frame, or None if depth is zero at the pixel.
     """
-    pass
+    depth = depth_image[y, x]
+    if depth == 0:
+        return None
+    
+    fx = cam_intrinsics["fx"]
+    fy = cam_intrinsics["fy"]
+    cx = cam_intrinsics["cx"]
+    cy = cam_intrinsics["cy"]
 
+    x = (x - cx) * depth / fx
+    y = (y - cy) * depth / fy
+    z = depth
+
+    return np.array([x, y, z])
 
 def solve_for_rigid_transformation(inpts, outpts):
     """
@@ -47,10 +130,22 @@ def solve_for_rigid_transformation(inpts, outpts):
     Returns:
         np.ndarray: A 3x4 transformation matrix T such that outpt ≈ T * inpt (homogeneous form).
     """
-    pass
+    centroid_inputs = np.mean(inpts, axis = 0)
+    centroid_outputs = np.mean(outpts, axis = 0)
+    centered_inputs = inpts - centroid_inputs
+    centered_outputs = outpts - centroid_outputs
 
+    H = np.dot(centered_inputs.T, centered_outputs) #cross_cov_matrix
+    U, _, Vt = np.linalg.svd(H) #left_singular_vectors, _, transpose_right_singular_vectors
+    R = np.dot(Vt.T, U.T) #rotational matrix
 
+    if np.linalg.det(R) < 0:
+        Vt[2, :] = Vt[2, :] * -1
+        R = np.dot(Vt.T, U.T)
 
+    t = centroid_outputs - np.dot(R, centroid_inputs)
+    T = np.hstack([R, t.reshape(-1, 1)])
+    return T
 
 def get_calibration_offset():
     """
@@ -63,8 +158,6 @@ def get_calibration_offset():
         np.ndarray: A 1D array of shape (3,) representing [x, y, z] offset in meters.
     """
     return -np.array([0.05, 0.0, 0.015]) # change this number based on your calibration
-
-
 
 def run_hand_eye_calibration():
     """
