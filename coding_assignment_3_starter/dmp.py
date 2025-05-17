@@ -13,16 +13,19 @@ class CanonicalSystem:
         # Initialize time parameters
         self.dt: float = dt
         self.ax: float = ax
-        self.run_time: float = None  # TODO: set total runtime
-        self.timesteps: int = None  # TODO: compute from run_time and dt
+        self.run_time: float = 1.0  # TODO: set total runtime
+        self.reset()
+        self.timesteps: int = int(self.run_time / dt)  # TODO: compute from run_time and dt
         self.x: float = None  # phase variable
 
     def reset(self) -> None:
         """
         Reset the phase variable to its initial value.
         """
-        # TODO: implement
-        pass
+        self.x = 1.0
+
+    def __step_once(self, x, tau, ec):
+        return x + (-self.ax * x * ec) * tau * self.dt
 
     def step(self, tau: float = 1.0, error_coupling: float = 1.0) -> float:
         """
@@ -31,8 +34,8 @@ class CanonicalSystem:
         Returns:
             float: Updated phase value.
         """
-        # TODO: implement update rule
-        raise NotImplementedError
+        self.x = self.__step_once(self.x, tau, error_coupling)
+        return self.x
 
     def rollout(self, tau: float = 1.0, ec: float = 1.0) -> np.ndarray:
         """
@@ -41,8 +44,12 @@ class CanonicalSystem:
         Returns:
             np.ndarray: Array of phase values over time.
         """
-        # TODO: call reset() then repeatedly call step()
-        raise NotImplementedError
+        xs = np.zeros(self.timesteps)
+        self.reset()
+        for i in range(self.timesteps):
+          xs[i] = self.step(tau, ec)
+
+        return xs
 
 class DMP:
     """
@@ -72,12 +79,32 @@ class DMP:
         self.n_dmps: int = n_dmps
         self.n_bfs: int = n_bfs
         self.dt: float = dt
-        self.y0: np.ndarray = None
-        self.goal: np.ndarray = None
-        self.ay: np.ndarray = None
-        self.by: np.ndarray = None
-        self.w: np.ndarray = None  # weights
-        self.cs: CanonicalSystem = None
+        
+        if (np.isscalar(y0)):
+            self.y0 = np.zeros(n_dmps)
+        else:
+            self.y0 = np.array(y0)
+
+        if (np.isscalar(goal)):
+            self.goal = np.zeros(n_dmps) + goal
+        else:
+            self.goal = np.array(goal)
+        
+        if (np.isscalar(ay)):
+            self.ay = np.zeros(n_dmps) + ay
+        else:
+            self.ay = np.array(ay)
+
+        if by is None:
+            self.by = self.ay / 4  #crit damping
+        else:
+            if (np.isscalar(by)):
+                self.by = np.zeros(n_dmps) + by
+            else: 
+                self.by = np.array(by)
+
+        self.w = np.zeros((n_dmps, n_bfs))  # weights
+        self.cs = CanonicalSystem(dt)
         self.reset_state()
 
     def reset_state(self) -> None:
