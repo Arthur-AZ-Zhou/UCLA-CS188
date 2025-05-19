@@ -15,7 +15,7 @@ class CanonicalSystem:
         self.x = 1.0
 
     def __step_once(self, x, tau, ec):
-        return x + (-self.ax * x * ec) * tau * self.dt
+        return (x + (-self.ax * x * ec) * tau * self.dt)
 
     def step(self, tau: float = 1.0, error_coupling: float = 1.0) -> float:
         self.x = self.__step_once(self.x, tau, error_coupling)

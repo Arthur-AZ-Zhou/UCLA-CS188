@@ -3,24 +3,10 @@ from collections import defaultdict
 from dmp import DMP
 from pid import PID
 
-
 class DMPPolicyWithPID:
-    """
-    A policy that follows a demonstrated path with DMPs and PID control.
-
-    The demonstration is split into segments based on grasp toggles.  
-    The first segment's endpoint is re-targeted to a new object pose.
-    Subsequent segments replay the original DMP rollouts.
-
-    Args:
-        square_obs (dict): 'SquareNut_pos' observed
-        demo_path (str): path to .npz file with demo data.
-        dt (float): control timestep.
-        n_bfs (int): number of basis functions per DMP.
-    """
     def __init__(self, square_pos, demo_path='demonstration_data.npz', dt=0.01, n_bfs=20):
         self.dt = dt
-        # Load and parse demo [DO NOT CHANGE]
+
         raw = np.load(demo_path)
         demos = defaultdict(dict)
         for key in raw.files:
@@ -28,49 +14,90 @@ class DMPPolicyWithPID:
             demos[f"{prefix}_{trial}"][field] = raw[key]
         demo = demos['demo_98']
 
-        # Extract trajectories and grasp
-        ee_pos = demo['obs_robot0_eef_pos']  # (T,3)
-        ee_grasp = demo['actions'][:, -1:].astype(int)  # (T,1)
-        segments = self.detect_grasp_segments(ee_grasp)
+        self.ee_pos = demo['obs_robot0_eef_pos']
+        self.ee_grasp = demo['actions'][:, -1:].astype(int)
+        self.segments = self.detect_grasp_segments(self.ee_grasp)
 
-        # Compute offset for first segment to new object pose
-        demo_obj_pos = demo['obs_object'][0, :3]
-        new_obj_pos = square_pos
-        start, end = segments[0]
-        offset = ee_pos[end-1] - demo_obj_pos
-
-        # TODO: Fit DMPs and generate segment trajectories
-        raise NotImplementedError
+        self.demo_obj_pos = demo['obs_object'][0, :3]
+        self.new_obj_pos = square_pos
+        self.pos_offset = self.new_obj_pos - self.demo_obj_pos
         
 
+        self.setup_dmps(n_bfs)
+        self.current_segment = 0
+        self.current_step = 0
+        self.pid = PID(kp=10.0, ki=0.5, kd=1.0, target=self.get_target_position(0, 0))
 
-    def detect_grasp_segments(self, grasp_flags: np.ndarray) -> list:
-        """
-        Identify segments based on grasp toggles.
+    def detect_grasp_segments(self, grasp_flags):
+        segments = []
+        start_idx = 0
+        prev_grasp = grasp_flags[0, 0]
+        
+        for i in range(1, len(grasp_flags)):
+            curr_grasp = grasp_flags[i, 0]
+            
+            if (curr_grasp != prev_grasp):
+                segments.append((start_idx, i))
+                start_idx = i
+                prev_grasp = curr_grasp
+        
+        if (start_idx < len(grasp_flags)):
+            segments.append((start_idx, len(grasp_flags)))
+            
+        return segments
+        
+    def setup_dmps(self, n_bfs):
+        self.dmps = []
+        self.segment_trajectories = []
+        
+        for i, (start, end) in enumerate(self.segments):
+            segment_pos = self.ee_pos[start:end]
+            
+            dmp = DMP(n_dmps=3, n_bfs=n_bfs, dt=self.dt)
+            dmp.imitate(segment_pos.T)
+            
+            self.dmps.append(dmp)
+                        
+    def get_target_position(self, segment_idx, step_idx):
+        start, end = self.segments[segment_idx]
+        
+        if segment_idx == 0:
+            if (step_idx + start < end):
+                return self.ee_pos[start + step_idx] + self.pos_offset
+            else:
+                return self.ee_pos[end - 1] + self.pos_offset
+        else:
+            if (start + step_idx < end):
+                return self.ee_pos[start + step_idx]
+            else:
+                return self.ee_pos[end - 1]
 
-        Args:
-            grasp_flags (np.ndarray): (T,1) array of grasp signals.
+    def get_grasp_state(self, segment_idx):
+        _, end = self.segments[segment_idx]
 
-        Returns:
-            List[Tuple[int,int]]: start and end indices per segment.
-        """
-        # TODO: implement boundary detection
-        raise NotImplementedError
-
-
-
-
-    def get_action(self, robot_eef_pos: np.ndarray) -> np.ndarray:
-        """
-        Compute next action for the robot's end-effector.
-
-        Args:
-            robot_eef_pos (np.ndarray): Current end-effector position [x,y,z].
-
-        Returns:
-            np.ndarray: Action vector [dx,dy,dz,0,0,0,grasp].
-        """
-        # TODO: select current segment and step
-        # TODO: compute PID-based delta_pos
-        # TODO: assemble action (zero rotation + grasp)
-        raise NotImplementedError
+        if (end < len(self.ee_grasp)):
+            return self.ee_grasp[end - 1, 0]
+        else:
+            return 0
+            
+    def get_action(self, robot_eef_pos):
+        start, end = self.segments[self.current_segment]
+        segment_length = end - start
+        
+        if (self.current_step >= segment_length - 1):
+            if (self.current_segment < len(self.segments) - 1):
+                self.current_segment += 1
+                self.current_step = 0
+            else:
+                self.current_step = segment_length - 1
+        
+        target_pos = self.get_target_position(self.current_segment, self.current_step)
+        self.pid.reset(target=target_pos)
+        delta_pos = self.pid.update(robot_eef_pos, dt=self.dt)
+        grasp = self.get_grasp_state(self.current_segment)
+        self.current_step += 1
+        
+        action = np.zeros(7)
+        action[:3] = delta_pos 
+        action[6] = grasp  
+        return action
