@@ -2,6 +2,7 @@ import numpy as np
 from collections import defaultdict
 from dmp import DMP
 from pid import PID
+import time
 
 class DMPPolicyWithPID:
     def __init__(self, square_pos, demo_path='demonstration_data.npz', dt=0.01, n_bfs=20):
@@ -21,12 +22,13 @@ class DMPPolicyWithPID:
         self.demo_obj_pos = demo['obs_object'][0, :3]
         self.new_obj_pos = square_pos
         self.pos_offset = self.new_obj_pos - self.demo_obj_pos
-        
 
         self.setup_dmps(n_bfs)
         self.current_segment = 0
         self.current_step = 0
         self.pid = PID(kp=10.0, ki=0.5, kd=1.0, target=self.get_target_position(0, 0))
+        self.flag = False
+        self.start_time = time.time()
 
     def detect_grasp_segments(self, grasp_flags):
         segments = []
@@ -81,6 +83,12 @@ class DMPPolicyWithPID:
             return 0
             
     def get_action(self, robot_eef_pos):
+        if (3 < time.time() - self.start_time):
+            print("open gripper")
+            action = np.zeros(7)
+            action[6] = -1.0  # Open gripper
+            return action
+
         start, end = self.segments[self.current_segment]
         segment_length = end - start
         
@@ -88,8 +96,10 @@ class DMPPolicyWithPID:
             if (self.current_segment < len(self.segments) - 1):
                 self.current_segment += 1
                 self.current_step = 0
+                # self.flag = True
             else:
                 self.current_step = segment_length - 1
+                self.flag = True
         
         target_pos = self.get_target_position(self.current_segment, self.current_step)
         self.pid.reset(target=target_pos)
@@ -97,7 +107,9 @@ class DMPPolicyWithPID:
         grasp = self.get_grasp_state(self.current_segment)
         self.current_step += 1
         
+        print("is this still triggered")
         action = np.zeros(7)
         action[:3] = delta_pos 
         action[6] = grasp  
+
         return action

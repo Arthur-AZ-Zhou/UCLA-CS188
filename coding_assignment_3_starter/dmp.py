@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.interpolate
 
-class CanonicalSystem:
+class CanonicalSystem: #copy paste from Rayan
     def __init__(self, dt: float, ax: float = 1.0):
         self.dt: float = dt
         self.ax: float = ax
@@ -50,7 +50,7 @@ class DMP:
         else:
             self.ay = np.array(ay)
 
-        if by is None:
+        if (by is None):
             self.by = np.ones(n_dmps) * (ay / 4.0)
         else:
             self.by = np.ones(n_dmps) * by
@@ -63,6 +63,7 @@ class DMP:
         self.y = self.y0.copy()
         self.dy = np.zeros(self.n_dmps)
         self.ddy = np.zeros(self.n_dmps)
+        # print("reset triggered")
 
         self.cs.reset()
 
@@ -76,9 +77,12 @@ class DMP:
         self.centers = np.exp(-self.cs.ax * np.linspace(0, 1, self.n_bfs))
         self.widths = 1.0 / (np.gradient(self.centers) ** 2)
         psi_track = np.zeros((self.timesteps, self.n_bfs))
+        # print("centers: ", self.centers)
+        # print("widths: ", self.widths)
 
         for t in range(self.timesteps):
             for b in range(self.n_bfs):
+                # print("t, b:", t, ", ", "b")
                 psi_track[t, b] = np.exp(-self.widths[b] * (self.x_track[t] - self.centers[b])**2)
                 
         self.psi_track = psi_track
@@ -86,6 +90,7 @@ class DMP:
     def _interpolate_trajectory(self, y_des):
         path = np.zeros((self.n_dmps, self.timesteps))
         x = np.linspace(0, self.cs.run_time, y_des.shape[1])
+        # print(x)
 
         for d in range(self.n_dmps):
             interp_fn = scipy.interpolate.interp1d(x, y_des[d])
@@ -118,6 +123,7 @@ class DMP:
 
                 if (1e-5 < abs(k)):
                     self.w[d, b] /= k
+                    # print("weights: ", self.w[d, b])
 
     def _compute_forcing_term(self, psi, x, goal):
         psi_sum = np.sum(psi) + 1e-10
@@ -126,16 +132,21 @@ class DMP:
         for d in range(self.n_dmps):
             f[d] = (np.dot(psi, self.w[d]) / psi_sum) * x * (goal[d] - self.y0[d])
 
+        print("returning f: ", f)
         return f
 
     def _update_dynamics(self, f, goal, tau):
         self.ddy = (self.ay * (self.by * (goal - self.y) - self.dy * tau) + f * tau) * tau
         self.dy += self.ddy * self.dt / tau
         self.y += self.dy * self.dt / tau
+        print("new ddy: ", self.ddy)
+        print("new dy: ", self.dy)
+        print("new y: ", self.y)
 
     def imitate(self, y_des):
-        if y_des.ndim == 1:
+        if (y_des.ndim == 1):
             y_des = y_des[np.newaxis, :]
+
         self.y_des = y_des
         self.y0 = y_des[:, 0].copy()
         self.goal = y_des[:, -1].copy()
@@ -145,6 +156,9 @@ class DMP:
         y_des_interp = self._interpolate_trajectory(y_des)
         dy_des, ddy_des = self._compute_derivatives(y_des_interp)
         f_target = self._compute_forcing_targets(y_des_interp, dy_des, ddy_des)
+        # y_des_interp = _interpolate_trajectory(y_des)
+        # dy_des, ddy_des = self._compute_derivatives(y_des_interp)
+        # f_target = self._compute_forcing_targets(y_des_interp, ddy_des, ddy_des)
         self._fit_weights(f_target)
 
         return y_des_interp
@@ -166,6 +180,7 @@ class DMP:
             f = self._compute_forcing_term(psi_track[t], x_track[t], goal)
             self._update_dynamics(f, goal, tau)
             y_track[t] = self.y.copy()
+            print("y_track[t]: ", y_track[t])
 
         return y_track
 
