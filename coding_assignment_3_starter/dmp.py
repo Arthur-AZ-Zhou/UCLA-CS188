@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.interpolate
 
 class CanonicalSystem:
     """
@@ -13,10 +14,11 @@ class CanonicalSystem:
         # Initialize time parameters
         self.dt: float = dt
         self.ax: float = ax
-        self.run_time: float = 1.0  # TODO: set total runtime
+        self.run_time: float = 1.0 
         self.reset()
-        self.timesteps: int = int(self.run_time / dt)  # TODO: compute from run_time and dt
-        self.x: float = None  # phase variable
+
+        self.timesteps: int = int(self.run_time / dt)  
+        self.x: float = 1.0
 
     def reset(self) -> None:
         """
@@ -81,27 +83,24 @@ class DMP:
         self.dt: float = dt
         
         if (np.isscalar(y0)):
-            self.y0 = np.zeros(n_dmps)
+            self.y0 = np.ones(n_dmps) * y0
         else:
             self.y0 = np.array(y0)
 
         if (np.isscalar(goal)):
-            self.goal = np.zeros(n_dmps) + goal
+            self.goal = np.ones(n_dmps) * goal
         else:
             self.goal = np.array(goal)
         
-        if (np.isscalar(ay)):
-            self.ay = np.zeros(n_dmps) + ay
+        if (isinstance(ay, int) or isinstance(ay, float)):
+            self.ay = np.ones(n_dmps) * ay
         else:
             self.ay = np.array(ay)
 
         if by is None:
-            self.by = self.ay / 4  #crit damping
+            self.by = np.ones(n_dmps) * (ay / 4.0)
         else:
-            if (np.isscalar(by)):
-                self.by = np.zeros(n_dmps) + by
-            else: 
-                self.by = np.array(by)
+            self.by = np.ones(n_dmps) * by
 
         self.w = np.zeros((n_dmps, n_bfs))  # weights
         self.cs = CanonicalSystem(dt)
@@ -111,8 +110,11 @@ class DMP:
         """
         Reset trajectories and canonical system state.
         """
-        # TODO: reset y, dy, ddy and call self.cs.reset()
-        raise NotImplementedError
+        self.y = self.y0.copy()
+        self.dy = np.zeros(self.n_dmps)
+        self.ddy = np.zeros(self.n_dmps)
+            
+        self.cs.reset()
 
     def imitate(self, y_des: np.ndarray) -> np.ndarray:
         """
@@ -124,8 +126,41 @@ class DMP:
         Returns:
             np.ndarray: Interpolated demonstration (D x T').
         """
-        # TODO: interpolate, compute forcing term, solve for w
-        raise NotImplementedError
+        # Handle 1D input
+        if y_des.ndim == 1:
+            y_des = y_des[np.newaxis, :]  # shape (1, T)
+
+        T = y_des.shape[1]
+        
+        # Update canonical system timing
+        self.cs.run_time = T * self.dt
+        self.cs.timesteps = T
+        self.timesteps = T
+        self._generate_centers_widths()
+
+        # Generate canonical phase trajectory
+        x_track = self.cs.rollout()
+        self.reset_state()
+
+        # Compute derivatives
+        dy_des = np.gradient(y_des, axis=1) / self.dt
+        ddy_des = np.gradient(dy_des, axis=1) / self.dt
+
+        # Compute basis functions
+        psi = self._basis_function(x_track)  # shape (T, n_bfs)
+
+        # Solve for weights
+        for d in range(self.n_dmps):
+            f_target = (
+                ddy_des[d]
+                - self.ay[d] * (self.by[d] * (self.goal[d] - y_des[d]) - dy_des[d])
+            )
+            for b in range(self.n_bfs):
+                numer = np.sum(psi[:, b] * x_track * f_target)
+                denom = np.sum(psi[:, b] * x_track**2)
+                self.w[d, b] = numer / (denom + 1e-6)
+
+        return y_des
 
     def rollout(
         self,
@@ -145,7 +180,29 @@ class DMP:
             np.ndarray: Generated trajectory (T x D).
         """
         # TODO: implement dynamical update loop
-        raise NotImplementedError
+        if new_goal is not None:
+            self.goal = np.array(new_goal)
+
+        self.reset_state()
+        x_track = self.cs.rollout(tau, error)  # canonical system phase over time
+        traj = np.zeros((self.timesteps, self.n_dmps))  # to store generated trajectory
+
+        for t in range(self.timesteps):
+            x = x_track[t]
+            psi = self._basis_function(np.array([x]))[0]  # shape (n_bfs,)
+
+            for d in range(self.n_dmps):
+                # Forcing function
+                f = np.dot(psi, self.w[d]) * x / (np.sum(psi) + 1e-6)
+
+                #DMP acceleration
+                self.ddy[d] = self.ay[d] * (self.by[d] * (self.goal[d] - self.y[d]) - self.dy[d]) + f
+                self.dy[d] += self.ddy[d] * self.dt
+                self.y[d] += self.dy[d] * self.dt
+
+            traj[t] = self.y.copy()
+
+        return traj
 
 # ==============================
 # DMP Unit test
